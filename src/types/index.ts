@@ -70,14 +70,14 @@ export interface FileAttachment {
   fileName: string;
   fileType: string;
   fileSize: number;
-  fileData: string; // Base64 encoded file data
+  fileData?: string;
 }
 
 export interface Message {
   id: string;
   appointmentId: string;
   senderId: string;
-  senderRole: 'patient' | 'doctor';
+  senderRole: 'patient' | 'doctor' | 'admin';
   content: string;
   timestamp: Date;
   read: boolean;
@@ -89,6 +89,7 @@ export interface Category {
   name: string;
   slug: string;
   description: string;
+  image: string;
 }
 
 export interface ActivityLog {

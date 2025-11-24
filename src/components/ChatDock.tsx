@@ -1,8 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Minus, MessageCircle, Bot, Stethoscope, Send, Loader2, MessageCircleQuestion } from 'lucide-react';
+import { X, MessageCircle, Bot, Stethoscope, Send, Loader2, Calendar, CreditCard, CheckCircle } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
-import { supabase } from '../lib/supabaseClient';
-import { useChat } from '../contexts/ChatContext';
 
 const API_URL = (import.meta as any).env?.VITE_API_URL || 'http://127.0.0.1:8000';
 
@@ -10,19 +8,6 @@ interface ChatMessage {
   id: string;
   role: 'assistant' | 'user' | 'system';
   content: string;
-  meta?: Record<string, string | number | undefined>;
-}
-
-interface PatientProfile {
-  id: string;
-  name: string;
-  email: string;
-  age?: number | null;
-  sex?: string | null;
-  height?: string | null;
-  weight?: string | null;
-  medications?: string | null;
-  allergies?: string | null;
 }
 
 interface DoctorProfile {
@@ -35,407 +20,174 @@ interface DoctorProfile {
   degrees?: string | null;
 }
 
-type ConversationStep =
-  | 'welcome'
-  | 'collect_issue'
-  | 'collect_symptoms'
-  | 'collect_duration'
-  | 'collect_severity'
-  | 'collect_medications'
-  | 'collect_allergies'
-  | 'confirm_summary'
-  | 'fetch_doctors'
-  | 'suggest_doctor'
-  | 'collect_schedule'
-  | 'handoff'
-  | 'completed'
-  | 'error';
-
-const SPECIALTY_KEYWORDS: Record<string, string[]> = {
-  Cardiology: ['heart', 'chest pain', 'palpitation', 'bp', 'blood pressure', 'hypertension', 'stroke'],
-  Dermatology: ['skin', 'rash', 'itch', 'acne', 'psoriasis', 'eczema', 'hair', 'nail'],
-  Neurology: ['headache', 'migraine', 'seizure', 'stroke', 'numbness', 'tingling', 'memory', 'brain'],
-  Pulmonology: ['cough', 'breath', 'asthma', 'wheezing', 'lung', 'chest tightness'],
-  Orthopedics: ['joint', 'knee', 'hip', 'back pain', 'fracture', 'bone', 'spine'],
-  Ophthalmology: ['eye', 'vision', 'blurry', 'red eye', 'dry eye', 'cataract'],
-  ENT: ['ear', 'nose', 'throat', 'sinus', 'hearing', 'tonsil', 'ringing'],
-  Gastroenterology: ['stomach', 'abdomen', 'liver', 'digestion', 'ulcer', 'vomit', 'nausea'],
-  Psychiatry: ['anxiety', 'depression', 'stress', 'sleep', 'mental', 'panic', 'trauma'],
-  Endocrinology: ['diabetes', 'thyroid', 'hormone', 'weight gain', 'pcos'],
-  Nephrology: ['kidney', 'urine', 'dialysis', 'renal', 'stones'],
-  Urology: ['urine', 'prostate', 'bladder', 'stones', 'incontinence'],
-  Pediatrics: ['child', 'baby', 'infant', 'pediatric']
-};
-
-const questionTemplates: Record<Exclude<ConversationStep, 'welcome' | 'fetch_doctors' | 'suggest_doctor' | 'handoff' | 'completed' | 'error'>, string> = {
-  collect_issue: 'Can you describe what illness or concern you are facing today?',
-  collect_symptoms: 'What symptoms are you experiencing? Feel free to list multiple.',
-  collect_duration: 'Since when have you been experiencing these symptoms?',
-  collect_severity: 'On a scale of 1 (mild) to 10 (severe), how intense are the symptoms?',
-  collect_medications: 'Are you currently taking any medications or treatments related to this issue?',
-  collect_allergies: 'Do you have any known allergies or sensitivities we should be aware of?',
-  confirm_summary: 'Does the summary above look correct? Reply yes to proceed or highlight anything to change.',
-  collect_schedule: 'When would you like to schedule the appointment? Please provide date and time (e.g., 2025-11-20 15:30).'
-};
-
-const DOCTOR_NAMES = [
-  'Dr. Aisha Khan',
-  'Dr. David Chen',
-  'Dr. Priya Patel',
-  'Dr. Michael Brown',
-  'Dr. Sofia Martinez',
-  'Dr. Liam O’Connor',
-  'Dr. Emma Wilson',
-  'Dr. Noah Anderson'
-];
-
 interface ChatDockProps {
   isCentered?: boolean;
 }
 
 const ChatDock: React.FC<ChatDockProps> = ({ isCentered = false }) => {
   const { user, token } = useAuth();
-  const { sendMessage: sendRealtimeMessage, onlineUsers } = useChat();
   const [isOpen, setIsOpen] = useState(false);
   const [hasInitialized, setHasInitialized] = useState(false);
-  const [hasEntered, setHasEntered] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [inputText, setInputText] = useState('');
-  const [step, setStep] = useState<ConversationStep>('welcome');
   const [loading, setLoading] = useState(false);
-  const [profile, setProfile] = useState<PatientProfile | null>(null);
-  const [intake, setIntake] = useState({
-    issue: '',
-    symptoms: '',
-    duration: '',
-    severity: '',
-    medications: '',
-    allergies: '',
-    schedule: ''
-  });
-  const [suggestedDoctor, setSuggestedDoctor] = useState<DoctorProfile | null>(null);
-  const [handedOffDoctorId, setHandedOffDoctorId] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+
+  // Flow State
+  const [recommendedDoctors, setRecommendedDoctors] = useState<DoctorProfile[]>([]);
+  const [selectedDoctor, setSelectedDoctor] = useState<DoctorProfile | null>(null);
+  const [intakeSummary, setIntakeSummary] = useState<any>(null);
+  const [showDatePicker, setShowDatePicker] = useState(false);
+  const [selectedDate, setSelectedDate] = useState('');
+  const [showPayment, setShowPayment] = useState(false);
+  const [paymentProcessing, setPaymentProcessing] = useState(false);
+  const [appointmentBooked, setAppointmentBooked] = useState(false);
+
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const inputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     const shouldOpen = localStorage.getItem('openChatDockAfterLogin') === '1';
     if (shouldOpen) {
-      const t = setTimeout(() => {
+      setTimeout(() => {
         setIsOpen(true);
         localStorage.removeItem('openChatDockAfterLogin');
         setHasInitialized(true);
       }, 400);
-      return () => clearTimeout(t);
+    } else {
+      setHasInitialized(true);
     }
-    setHasInitialized(true);
   }, []);
 
   const assistantStatus = useMemo(() => {
     if (loading) return 'Thinking...';
-    if (step === 'handoff' && handedOffDoctorId) return 'Chat started with doctor';
-    if (error) return 'Issue loading assistant';
-    return 'Ready to help';
-  }, [loading, step, handedOffDoctorId, error]);
+    if (appointmentBooked) return 'Appointment Confirmed';
+    return 'AI Health Assistant';
+  }, [loading, appointmentBooked]);
 
-  useEffect(() => {
-    const shouldOpen = localStorage.getItem('openChatDockAfterLogin') === '1';
-    if (shouldOpen) {
-      const t = setTimeout(() => {
-        setIsOpen(true);
-        localStorage.removeItem('openChatDockAfterLogin');
-        setHasInitialized(true);
-      }, 400);
-      return () => clearTimeout(t);
-    }
-    setHasInitialized(true);
-  }, []);
-
-  useEffect(() => {
-    if (isOpen) {
-      const t = setTimeout(() => setHasEntered(true), 40);
-      return () => clearTimeout(t);
-    }
-    setHasEntered(false);
-  }, [isOpen]);
-
-  useEffect(() => {
-    if (hasEntered) {
-      inputRef.current?.focus();
-    }
-  }, [hasEntered]);
-
-  const addMessage = (role: ChatMessage['role'], content: string, meta?: ChatMessage['meta']) => {
-    setMessages(prev => [...prev, { id: crypto.randomUUID(), role, content, meta }]);
+  const addMessage = (role: ChatMessage['role'], content: string) => {
+    setMessages(prev => [...prev, { id: crypto.randomUUID(), role, content }]);
+    setTimeout(() => messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' }), 50);
   };
 
   useEffect(() => {
-    if (!isOpen || messages.length > 0) return;
-    addMessage('assistant', 'Hi there! I’m your personal health assistant. Let me look you up...');
-    bootstrapProfile();
-  }, [isOpen, messages.length]);
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-  }, [messages]);
+    if (isOpen && messages.length === 0 && user) {
+      addMessage('assistant', `Hi ${user.name.split(' ')[0]}! I'm your health assistant. How can I help you today?`);
+    }
+  }, [isOpen, messages.length, user]);
 
   const handleSend = async () => {
-    const trimmed = inputText.trim();
-    if (!trimmed || loading) return;
+    const text = inputText.trim();
+    if (!text || loading) return;
+
     setInputText('');
-    addMessage('user', trimmed);
-    inputRef.current?.focus();
-
-    switch (step) {
-      case 'collect_issue':
-        setIntake(prev => ({ ...prev, issue: trimmed }));
-        setStep('collect_symptoms');
-        addMessage('assistant', questionTemplates.collect_symptoms);
-        break;
-      case 'collect_symptoms':
-        setIntake(prev => ({ ...prev, symptoms: trimmed }));
-        setStep('collect_duration');
-        addMessage('assistant', questionTemplates.collect_duration);
-        break;
-      case 'collect_duration':
-        setIntake(prev => ({ ...prev, duration: trimmed }));
-        setStep('collect_severity');
-        addMessage('assistant', questionTemplates.collect_severity);
-        break;
-      case 'collect_severity':
-        if (!/^(10|[1-9])$/.test(trimmed)) {
-          addMessage('assistant', 'Please enter a whole number from 1 to 10 to describe severity.');
-          return;
-        }
-        setIntake(prev => ({ ...prev, severity: trimmed }));
-        setStep('collect_medications');
-        addMessage('assistant', questionTemplates.collect_medications);
-        break;
-      case 'collect_medications':
-        setIntake(prev => ({ ...prev, medications: trimmed }));
-        setStep('collect_allergies');
-        addMessage('assistant', questionTemplates.collect_allergies);
-        break;
-      case 'collect_allergies':
-        setIntake(prev => ({ ...prev, allergies: trimmed }));
-        summarizeIntake({ ...intake, allergies: trimmed });
-        break;
-      case 'confirm_summary':
-        if (trimmed.toLowerCase().startsWith('y')) {
-          setStep('fetch_doctors');
-          await fetchMatchingDoctor();
-        } else {
-          addMessage('assistant', 'No worries—please tell me which part to update or re-describe your symptoms.');
-          setStep('collect_symptoms');
-        }
-        break;
-      case 'suggest_doctor':
-        if (!suggestedDoctor) {
-          addMessage('assistant', 'I do not yet have a doctor suggestion. Let’s try fetching again.');
-          await fetchMatchingDoctor();
-          return;
-        }
-        if (trimmed.toLowerCase().includes('yes')) {
-          if (!intake.schedule) {
-            addMessage('assistant', questionTemplates.collect_schedule);
-            setStep('collect_schedule');
-            return;
-          }
-          await handoffToDoctor();
-        } else if (trimmed.toLowerCase().includes('no')) {
-          addMessage('assistant', 'Okay, let me look for another specialist.');
-          await fetchMatchingDoctor(true);
-        } else {
-          addMessage('assistant', 'Please reply "yes" to proceed with this doctor, or "no" if you’d like another option.');
-        }
-        break;
-      case 'collect_schedule':
-        {
-          const dt = new Date(trimmed);
-          if (isNaN(dt.getTime())) {
-            addMessage('assistant', 'I could not understand that date/time. Please use a format like 2025-11-20 15:30.');
-            return;
-          }
-          if (dt.getTime() <= Date.now()) {
-            addMessage('assistant', 'The selected time is in the past. Please provide a future date and time.');
-            return;
-          }
-          setIntake(prev => ({ ...prev, schedule: dt.toISOString() }));
-          await handoffToDoctor();
-        }
-        break;
-      case 'handoff':
-        addMessage('assistant', 'You are already connected with the doctor. Please continue chatting in the dedicated window.');
-        break;
-      default:
-        addMessage('assistant', 'Let me review your details once more.');
-    }
-  };
-
-  const bootstrapProfile = async () => {
-    if (!user || !token) {
-      addMessage('assistant', 'Please sign in to use the assistant.');
-      setStep('completed');
-      return;
-    }
-
+    addMessage('user', text);
     setLoading(true);
+
     try {
-      const res = await fetch(`${API_URL}/api/assistant/profile`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) throw new Error('Profile fetch failed');
-      const json = await res.json();
-      const data = json.patient;
-      const patient: PatientProfile = {
-        id: data.id,
-        name: data.name,
-        email: data.email,
-        age: data.age,
-        sex: data.sex,
-        height: data.height,
-        weight: data.weight,
-        medications: data.medications,
-        allergies: data.allergies,
-      };
-      setProfile(patient);
-      addMessage('assistant', `Hi ${patient.name.split(' ')[0]} 👋. I’m here to help you find the right doctor.`);
-      setStep('collect_issue');
-      addMessage('assistant', questionTemplates.collect_issue);
-    } catch (err: any) {
-      console.error('Failed to load patient profile', err);
-      setError(err.message || 'Unable to fetch profile');
-      addMessage('assistant', 'I had trouble loading your profile. Please refresh and try again.');
-      setStep('error');
-    } finally {
-      setLoading(false);
-    }
-  };
+      const history = messages.map(m => ({ role: m.role, content: m.content }));
+      history.push({ role: 'user', content: text });
 
-  const summarizeIntake = (finalIntake = intake) => {
-    const summary = `Summary:
-• Issue: ${finalIntake.issue || 'Not specified'}
-• Symptoms: ${finalIntake.symptoms || 'Not specified'}
-• Duration: ${finalIntake.duration || 'Not specified'}
-• Severity: ${finalIntake.severity || 'Not rated'}
-• Medications: ${finalIntake.medications || 'None reported'}
-• Allergies: ${finalIntake.allergies || 'None reported'}`;
-    addMessage('assistant', summary.replace(/\n/g, '\n'));
-    addMessage('assistant', questionTemplates.confirm_summary);
-    setStep('confirm_summary');
-  };
-
-  const detectSpecialty = () => {
-    const text = `${intake.issue} ${intake.symptoms}`.toLowerCase();
-    let bestMatch: { specialty: string; score: number } | null = null;
-    Object.entries(SPECIALTY_KEYWORDS).forEach(([specialty, keywords]) => {
-      const score = keywords.reduce((acc, keyword) => (text.includes(keyword) ? acc + 1 : acc), 0);
-      if (!bestMatch || score > bestMatch.score) {
-        bestMatch = { specialty, score };
-      }
-    });
-    if (bestMatch && bestMatch.score > 0) {
-      return bestMatch.specialty;
-    }
-    return undefined;
-  };
-
-  const fetchMatchingDoctor = async (excludeCurrent = false) => {
-    if (!token) return;
-    setLoading(true);
-    try {
-      addMessage('assistant', 'Let me search for suitable doctors...');
-      const res = await fetch(`${API_URL}/api/assistant/recommend`, {
+      const res = await fetch(`${API_URL}/api/assistant/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({
-          issue: intake.issue,
-          symptoms: intake.symptoms,
-          duration: intake.duration,
-          severity: intake.severity ? Number(intake.severity) : undefined,
-          medications: intake.medications,
-          allergies: intake.allergies,
-          exclude_doctor_id: excludeCurrent ? suggestedDoctor?.id : undefined,
+          messages: history.filter(m => m.role !== 'system'),
+          patient_context: user ? { name: user.name, age: user.age } : undefined
         }),
       });
-      if (!res.ok) throw new Error('Doctor recommend failed');
-      const json = await res.json();
-      const doc = json.doctor;
-      if (!doc) {
-        addMessage('assistant', 'I could not find an approved doctor that matches the criteria right now. I can notify you when one is available.');
-        setStep('completed');
-        return;
+
+      if (!res.ok) throw new Error('Failed to get response');
+      const data = await res.json();
+
+      addMessage('assistant', data.message);
+
+      if (data.action === 'recommend_doctor') {
+        setRecommendedDoctors(data.data.doctors);
+        setIntakeSummary(data.data.intake_summary);
+        // The UI will render the doctor selection cards below the last message
       }
-      const doctor: DoctorProfile = {
-        id: doc.id,
-        name: doc.name,
-        email: doc.email,
-        category: doc.category,
-        bio: doc.bio,
-        degrees: doc.degrees,
-        experience: doc.experience,
-      };
-      setSuggestedDoctor(doctor);
-      setStep('suggest_doctor');
-      addMessage(
-        'assistant',
-        `I recommend ${doctor.name} (${doctor.category}). ${doctor.experience ? `Experience: ${doctor.experience}. ` : ''}Would you like to proceed with this doctor? (yes/no)`
-      );
-    } catch (err: any) {
-      console.error('Doctor search failed', err);
-      addMessage('assistant', 'I had trouble fetching doctors. Please try again later.');
-      setError(err.message || 'Doctor search failed');
-      setStep('error');
+
+    } catch (err) {
+      console.error(err);
+      addMessage('assistant', 'I encountered an error. Please try again.');
     } finally {
       setLoading(false);
+      setTimeout(() => inputRef.current?.focus(), 100);
     }
   };
 
-  const handoffToDoctor = async () => {
-    if (!user || !token || !profile || !suggestedDoctor) {
-      addMessage('assistant', 'I lost the doctor details. Let me search again.');
-      await fetchMatchingDoctor();
-      return;
-    }
-    if (!intake.schedule) {
-      addMessage('assistant', questionTemplates.collect_schedule);
-      setStep('collect_schedule');
-      return;
-    }
-    const dt = new Date(intake.schedule);
-    if (isNaN(dt.getTime()) || dt.getTime() <= Date.now()) {
-      addMessage('assistant', 'The selected time is invalid or in the past. Please provide a future date and time.');
-      setStep('collect_schedule');
-      return;
-    }
+  const handleSelectDoctor = (doctor: DoctorProfile) => {
+    setSelectedDoctor(doctor);
+    addMessage('assistant', `You selected Dr. ${doctor.name}. Please choose a date and time for your appointment.`);
+    setShowDatePicker(true);
+    setRecommendedDoctors([]);
+  };
 
+  const handleDateConfirm = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!selectedDate) return;
+    setShowDatePicker(false);
+
+    // Show confirmation summary
+    const summary = `
+📋 **Appointment Summary**
+
+**Patient:** ${user?.name}
+**Doctor:** Dr. ${selectedDoctor?.name} (${selectedDoctor?.category})
+**Date & Time:** ${new Date(selectedDate).toLocaleString()}
+
+**Your Symptoms:**
+• Issue: ${intakeSummary?.issue || 'Not specified'}
+• Symptoms: ${intakeSummary?.symptoms || 'Not specified'}
+• Duration: ${intakeSummary?.duration || 'Not specified'}
+• Severity: ${intakeSummary?.severity || 'Not rated'}/10
+• Medications: ${intakeSummary?.medications || 'None'}
+• Allergies: ${intakeSummary?.allergies || 'None'}
+
+Please review and proceed to payment.`;
+
+    addMessage('assistant', summary);
+    setShowPayment(true);
+  };
+
+  const handlePayment = async () => {
+    setPaymentProcessing(true);
+    // Simulate payment delay
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    setPaymentProcessing(false);
+    setShowPayment(false);
+
+    await bookAppointment();
+  };
+
+  const bookAppointment = async () => {
+    if (!selectedDoctor || !selectedDate || !intakeSummary || !user || !token) return;
     setLoading(true);
     try {
       const payload = {
         patient_id: user.id,
-        doctor_id: suggestedDoctor.id,
-        patient_name: profile.name,
-        doctor_name: suggestedDoctor.name,
-        doctor_category: suggestedDoctor.category,
-        datetime: dt.toISOString(),
-        symptoms: `${intake.issue}; ${intake.symptoms}`,
+        doctor_id: selectedDoctor.id,
+        patient_name: user.name,
+        doctor_name: selectedDoctor.name,
+        doctor_category: selectedDoctor.category,
+        datetime: new Date(selectedDate).toISOString(),
+        symptoms: `${intakeSummary.issue}; ${intakeSummary.symptoms}`,
       };
+
       const res = await fetch(`${API_URL}/api/assistant/appointments`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('Appointment request failed');
-      setHandedOffDoctorId(suggestedDoctor.id);
-      setStep('handoff');
-      addMessage('assistant', 'Appointment request sent to the doctor. Chat will be enabled once the doctor approves. You can check the Messages section after approval.');
-      addMessage('assistant', 'If you would like another recommendation, just type "restart".');
-    } catch (err: any) {
-      console.error('Failed to create appointment', err);
-      addMessage('assistant', 'I could not request the appointment due to a system issue. Please try again.');
-      setError(err.message || 'Appointment request failed');
-      setStep('error');
+
+      if (!res.ok) throw new Error('Booking failed');
+
+      setAppointmentBooked(true);
+      addMessage('assistant', 'Payment successful! Your appointment has been confirmed. You can view it in your dashboard.');
+      addMessage('assistant', 'A chat channel with the doctor has been opened in the Messages section.');
+    } catch (err) {
+      console.error(err);
+      addMessage('assistant', 'Payment succeeded but booking failed. Please contact support.');
     } finally {
       setLoading(false);
     }
@@ -444,102 +196,187 @@ const ChatDock: React.FC<ChatDockProps> = ({ isCentered = false }) => {
   if (!hasInitialized) return null;
 
   return (
-    <div className="pointer-events-none">
-      <h2 className={`chatbot-heading ${isOpen ? 'open' : ''} ${isCentered ? 'chatbot-centered' : ''}`}>AI Health Assistant 💬</h2>
-      <div className={`chatbot-container ${isOpen ? 'open' : ''} ${isCentered ? 'chatbot-centered' : ''}`} {...(isOpen ? {} : { 'aria-hidden': true })}>
+    <div>
+      <div
+        className={`chatbot-container ${isOpen ? 'open' : ''} ${isCentered ? 'chatbot-centered' : ''}`}
+        aria-hidden={!isOpen}
+      >
         <div className="pointer-events-auto flex-1 min-h-0 bg-white shadow-2xl border border-neutral-200 rounded-2xl overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between px-4 py-3 border-b border-neutral-200 bg-gradient-to-r from-sky-500 to-blue-600 text-white">
+          {/* Header */}
+          <div className="flex items-center justify-between px-5 py-4 border-b border-neutral-100 bg-white text-neutral-800">
             <div className="flex items-center space-x-3">
-              <div className="bg-white/20 rounded-full p-2">
-                <Bot className="h-5 w-5" />
+              <div className="bg-blue-50 rounded-full p-2">
+                <Bot className="h-6 w-6 text-blue-600" />
               </div>
               <div>
-                <p className="text-xs uppercase tracking-wide opacity-80">AI Assistant</p>
-                <p className="text-sm font-semibold">{assistantStatus}</p>
+                <p className="text-sm font-bold text-neutral-900">AI Assistant</p>
+                <p className="text-xs font-medium text-blue-600 flex items-center">
+                  <span className="w-2 h-2 bg-green-500 rounded-full mr-1.5 animate-pulse"></span>
+                  {assistantStatus}
+                </p>
               </div>
             </div>
             <button
-              className="p-2 rounded-md text-white/80 hover:text-white hover:bg-white/10 transition"
+              className="p-2 rounded-full hover:bg-neutral-100 text-neutral-400 hover:text-neutral-600 transition-colors"
               onClick={() => setIsOpen(false)}
               aria-label="Minimize chat"
             >
-              <Minus className="h-4 w-4" />
+              <X className="h-5 w-5" />
             </button>
           </div>
 
-          <section className="flex-1 flex flex-col bg-[#e6f7ff]">
-            <header className={`px-4 py-3 border-b border-neutral-200 flex items-center space-x-2 ${hasEntered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-1'} transition-all`}>
-              <Stethoscope className="h-5 w-5 text-blue-500" />
-              <p className="text-sm text-slate-600">Describe your symptoms and I’ll find the right doctor.</p>
-            </header>
-
-            <div className={`chatbot-messages flex-1 overflow-y-auto px-4 py-4 space-y-3 ${hasEntered ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-2'} transition-all`} aria-live="polite">
-              {messages.map(msg => (
-                <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
-                  <div
-                    className={`max-w-[85%] px-4 py-2 rounded-2xl shadow-sm border whitespace-pre-wrap break-words text-sm leading-relaxed ${
-                      msg.role === 'user'
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : msg.role === 'system'
-                        ? 'bg-amber-50 text-amber-900 border-amber-200'
-                        : 'bg-white text-gray-900 border-gray-200'
+          {/* Messages Area */}
+          <div className="chatbot-messages flex-1 overflow-y-auto px-4 py-4 space-y-4 bg-slate-50">
+            {messages.map(msg => (
+              <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in`}>
+                <div
+                  className={`max-w-[85%] px-4 py-3 rounded-2xl shadow-sm whitespace-pre-wrap break-words text-sm leading-relaxed ${msg.role === 'user'
+                    ? 'bg-blue-600 text-white rounded-br-none'
+                    : 'bg-white text-slate-800 border border-slate-200 rounded-bl-none'
                     }`}
-                  >
-                    {msg.content}
+                >
+                  {msg.content}
+                </div>
+              </div>
+            ))}
+
+            {/* Doctor Recommendations */}
+            {recommendedDoctors.length > 0 && !selectedDoctor && (
+              <div className="space-y-3 mt-4 animate-slide-up">
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider ml-1">Recommended Doctors</p>
+                {recommendedDoctors.map(doc => (
+                  <div key={doc.id} className="doctor-suggestion-card bg-white p-4 rounded-xl border border-blue-100 shadow-sm hover:shadow-md transition-all cursor-pointer group" onClick={() => handleSelectDoctor(doc)}>
+                    <div className="flex items-start justify-between">
+                      <div>
+                        <h4 className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors">{doc.name}</h4>
+                        <p className="text-sm text-blue-500 font-medium">{doc.category}</p>
+                        <p className="text-xs text-slate-500 mt-1">{doc.experience || '5+ years experience'}</p>
+                      </div>
+                      <div className="bg-blue-50 p-2 rounded-lg group-hover:bg-blue-100 transition-colors">
+                        <Stethoscope className="h-5 w-5 text-blue-600" />
+                      </div>
+                    </div>
+                    <button className="w-full mt-3 py-2 bg-slate-100 text-slate-700 text-xs font-bold rounded-lg group-hover:bg-blue-600 group-hover:text-white transition-all">
+                      Select Doctor
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Date Picker */}
+            {showDatePicker && (
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm animate-slide-up">
+                <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center">
+                  <Calendar className="h-4 w-4 mr-2 text-blue-600" />
+                  Select Appointment Time
+                </h4>
+                <form onSubmit={handleDateConfirm} className="space-y-3">
+                  <input
+                    type="datetime-local"
+                    min={new Date().toISOString().slice(0, 16)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 outline-none"
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    required
+                  />
+                  <button type="submit" className="w-full py-2 bg-blue-600 text-white text-sm font-bold rounded-lg hover:bg-blue-700 transition-colors">
+                    Confirm Time
+                  </button>
+                </form>
+              </div>
+            )}
+
+            {/* Payment Section */}
+            {showPayment && (
+              <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm animate-slide-up">
+                <h4 className="text-sm font-bold text-slate-900 mb-3 flex items-center">
+                  <CreditCard className="h-4 w-4 mr-2 text-green-600" />
+                  Complete Payment
+                </h4>
+                <div className="bg-slate-50 p-3 rounded-lg mb-3">
+                  <div className="flex justify-between text-sm mb-1">
+                    <span className="text-slate-600">Consultation Fee</span>
+                    <span className="font-semibold">$50.00</span>
+                  </div>
+                  <div className="flex justify-between text-sm">
+                    <span className="text-slate-600">Service Fee</span>
+                    <span className="font-semibold">$2.00</span>
+                  </div>
+                  <div className="border-t border-slate-200 my-2"></div>
+                  <div className="flex justify-between text-sm font-bold text-slate-900">
+                    <span>Total</span>
+                    <span>$52.00</span>
                   </div>
                 </div>
-              ))}
-              <div ref={messagesEndRef} />
-            </div>
-
-            <footer className={`px-4 py-3 border-t border-neutral-200 bg-white`}>
-              <div className="flex items-center space-x-2">
-                <div className="flex-1 relative">
-                  <input
-                    type="text"
-                    value={inputText}
-                    disabled={step === 'error' || step === 'completed'}
-                    onChange={e => setInputText(e.target.value)}
-                    onKeyDown={e => {
-                      if (e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSend();
-                      }
-                    }}
-                    ref={inputRef}
-                    placeholder={step === 'handoff' ? 'Please continue the chat in Messages section.' : 'Type your reply...'}
-                    className="flex-1 form-input rounded-2xl border-2 border-slate-200 focus:border-blue-500 focus:ring-blue-500 pr-10"
-                  />
-                  {loading && (
-                    <Loader2 className="h-4 w-4 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
-                  )}
-                </div>
                 <button
-                  onClick={handleSend}
-                  disabled={!inputText.trim() || loading || step === 'error' || step === 'completed'}
-                  className="inline-flex items-center px-4 py-2 rounded-2xl bg-blue-600 text-white font-semibold shadow-sm hover:bg-blue-700 disabled:opacity-50"
+                  onClick={handlePayment}
+                  disabled={paymentProcessing}
+                  className="w-full py-2.5 bg-green-600 text-white text-sm font-bold rounded-lg hover:bg-green-700 transition-colors flex items-center justify-center"
                 >
-                  <Send className="h-4 w-4 mr-2" />
-                  Send
+                  {paymentProcessing ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Processing...
+                    </>
+                  ) : (
+                    'Pay & Book Appointment'
+                  )}
                 </button>
               </div>
-              {step === 'handoff' && handedOffDoctorId && (
-                <p className="text-xs text-emerald-600 mt-2 flex items-center space-x-1">
-                  <MessageCircleQuestion className="h-4 w-4" />
-                  <span>Doctor chat is ready. Visit Messages to continue the conversation.</span>
-                </p>
-              )}
-            </footer>
-          </section>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
+
+          {/* Input Area */}
+          <footer className={`px-4 py-3 border-t border-neutral-200 bg-white`}>
+            <div className="flex items-center space-x-2">
+              <div className="flex-1 relative pointer-events-auto">
+                <input
+                  type="text"
+                  value={inputText}
+                  disabled={loading || showDatePicker || showPayment || appointmentBooked}
+                  onChange={e => setInputText(e.target.value)}
+                  onKeyDown={e => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      void handleSend();
+                    }
+                  }}
+                  ref={inputRef}
+                  placeholder={appointmentBooked ? "Appointment booked!" : "Type your reply..."}
+                  className="flex-1 form-input rounded-2xl border-2 border-slate-200 focus:border-blue-500 focus:ring-blue-500 pr-10"
+                  aria-label="Chat input"
+                />
+                {loading && (
+                  <Loader2 className="h-4 w-4 text-slate-400 animate-spin absolute right-3 top-1/2 -translate-y-1/2" />
+                )}
+              </div>
+              <button
+                onClick={() => void handleSend()}
+                disabled={!inputText.trim() || loading || showDatePicker || showPayment || appointmentBooked}
+                className="inline-flex items-center px-4 py-2 rounded-2xl bg-blue-600 text-white font-semibold shadow-sm hover:bg-blue-700 disabled:opacity-50"
+                aria-label="Send message"
+              >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+                Send
+              </button>
+            </div>
+            {appointmentBooked && (
+              <p className="text-xs text-emerald-600 mt-2 flex items-center space-x-1">
+                <CheckCircle className="h-4 w-4" />
+                <span>Appointment confirmed! Check your dashboard and Messages section.</span>
+              </p>
+            )}
+          </footer>
         </div>
       </div>
 
       <button
         onClick={() => setIsOpen(prev => !prev)}
-        className={`chatbot-toggle pointer-events-auto ${isCentered ? 'chatbot-toggle-centered' : ''}`}
+        className={`chatbot-toggle pointer-events-auto ${isCentered ? 'chatbot-toggle-centered' : ''} ${isOpen ? 'open' : ''}`}
         aria-label={isOpen ? 'Minimize chat' : 'Open chat'}
       >
-        {isOpen ? <Minus className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
+        {isOpen ? <X className="h-6 w-6" /> : <MessageCircle className="h-6 w-6" />}
       </button>
     </div>
   );

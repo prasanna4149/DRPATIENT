@@ -1,9 +1,9 @@
 import { Outlet, Link, useLocation } from 'react-router-dom';
 import { useState, ReactNode } from 'react';
 import { useAuth } from '../contexts/AuthContext';
-import { 
-  Heart, 
-  Calendar, 
+import {
+  Heart,
+  Calendar,
   LogOut,
   BarChart3,
   User as UserIcon,
@@ -50,11 +50,10 @@ const Layout = () => {
       key={key}
       type="button"
       onClick={() => setIsAgentChatOpen(true)}
-      className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:-translate-y-0.5 ${
-        isAgentChatOpen
+      className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 hover:-translate-y-0.5 ${isAgentChatOpen
           ? 'text-primary-600 bg-primary-50 shadow-sm'
           : 'text-neutral-700 hover:text-primary-600 hover:bg-neutral-100'
-      } ${extraClasses}`.trim()}
+        } ${extraClasses}`.trim()}
     >
       <MessageCircle className="h-4 w-4" />
       <span>Chat with Agent</span>
@@ -75,13 +74,11 @@ const Layout = () => {
         <Link
           key={item.path}
           to={item.path}
-          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium ${
-            isMobile ? 'whitespace-nowrap' : ''
-          } transition-all duration-200 hover:-translate-y-0.5 ${
-            isActivePath(item.path)
+          className={`flex items-center space-x-2 px-4 py-2 rounded-lg text-sm font-medium ${isMobile ? 'whitespace-nowrap' : ''
+            } transition-all duration-200 hover:-translate-y-0.5 ${isActivePath(item.path)
               ? 'text-primary-600 bg-primary-50 shadow-sm'
               : 'text-neutral-700 hover:text-primary-600 hover:bg-neutral-100'
-          }`}
+            }`}
         >
           <Icon className="h-4 w-4" />
           <span>{item.label}</span>
@@ -109,7 +106,15 @@ const Layout = () => {
           <div className="flex justify-between items-center h-16">
             {/* Logo */}
             <div className="flex items-center">
-              <Link to="/" className="flex items-center space-x-2">
+              <Link
+                to={
+                  user.role === 'patient' ? '/patient/browse' :
+                    user.role === 'doctor' ? '/doctor/dashboard' :
+                      user.role === 'admin' ? '/admin/dashboard' :
+                        user.role === 'agent' ? '/agent/dashboard' : '/'
+                }
+                className="flex items-center space-x-2"
+              >
                 <div className="relative">
                   <Heart className="h-8 w-8 text-primary-600 transition-transform duration-200 hover:scale-110" />
                   <div className="absolute -top-1 -right-1 w-3 h-3 bg-success-500 rounded-full animate-pulse-soft"></div>

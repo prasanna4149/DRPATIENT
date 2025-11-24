@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { X, Send, User, Calendar, Clock, Paperclip } from 'lucide-react';
+import { X, Send, User, Calendar, Clock, Paperclip, AlertTriangle } from 'lucide-react';
 import { useData } from '../contexts/DataContext';
 import { useAuth } from '../contexts/AuthContext';
 import FileAttachmentComponent from './FileAttachment';
 import { Message } from '../types';
+import { usePIIDetection } from '../hooks/usePIIDetection';
 
 interface MessageModalProps {
   appointmentId: string;
@@ -12,11 +13,15 @@ interface MessageModalProps {
 
 const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) => {
   const { user } = useAuth();
+  const currentUserId = user?.id ?? null;
+
   const { appointments, getAppointmentMessages, sendMessage, markMessagesAsRead } = useData();
   const [message, setMessage] = useState('');
   const [messages, setMessages] = useState<any[]>([]);
   const [activeChat, setActiveChat] = useState<'doctor' | 'agent'>('doctor');
-  const [agentMessages, setAgentMessages] = useState<Array<{ id: string; sender: 'patient' | 'agent'; content: string; timestamp: Date }>>([]);
+  const [agentMessages, setAgentMessages] = useState<
+    Array<{ id: string; sender: 'patient' | 'agent'; content: string; timestamp: Date }>
+  >([]);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -36,7 +41,21 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
     return () => { clearInterval(interval); window.removeEventListener('storage', onStorage); };
   }, []);
 
-  // Simple privacy masking
+  // PII detection hook (same pattern as AgentDoctor)
+  const { checkMessage, isServiceHealthy } = usePIIDetection(currentUserId, 'high');
+  const [piiCheckResult, setPiiCheckResult] = useState<{
+    shouldBlock: boolean;
+    reason: string;
+    maskedText: string;
+    confidence: string;
+    violations: any[];
+  } | null>(null);
+  const [showPiiWarning, setShowPiiWarning] = useState(false);
+
+  // Use a monotonic id to ignore stale checks
+  const checkIdRef = useRef(0);
+
+  // Simple privacy masking (keeps for local fallback; the main check is via PII service)
   const maskContent = (text: string): string => {
     const phoneRegex = /\b\d{10}\b/;
     const emailRegex = /[\w.-]+@[\w.-]+\.[A-Za-z]{2,}/;
@@ -79,7 +98,7 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages, agentMessages, activeChat]);
+  }, [messages, agentMessages, activeChat, showPiiWarning]);
 
   // Initialize Agent Chat when switching to tab the first time
   useEffect(() => {
@@ -108,34 +127,115 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
     }
   }, [activeChat, agentMessages.length, appointment]);
 
+  // --- Real-time PII checking as user types ---
+  useEffect(() => {
+    // Only check text (not files). If empty or service not healthy, clear state.
+    if (!message.trim() || !isServiceHealthy) {
+      setPiiCheckResult(null);
+      setShowPiiWarning(false);
+      return;
+    }
+
+    const myCheckId = ++checkIdRef.current;
+    const handler = setTimeout(async () => {
+      try {
+        const result = await checkMessage(message);
+        // ignore stale responses
+        if (myCheckId !== checkIdRef.current) return;
+        setPiiCheckResult(result);
+        setShowPiiWarning(Boolean(result && (result.shouldBlock || (result.violations && result.violations.length > 0))));
+      } catch (err) {
+        // if check fails, clear warning but keep typing UX
+        console.error('PII check error:', err);
+        setPiiCheckResult(null);
+        setShowPiiWarning(false);
+      }
+    }, 500); // same debounce as AgentDoctor
+
+    return () => {
+      clearTimeout(handler);
+    };
+  }, [message, checkMessage, isServiceHealthy]);
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
-    if ((!message.trim() && !selectedFile) || !appointmentId) return;
+    if ((!message.trim() && !selectedFile) || !appointmentId || !currentUserId) return;
 
+    // Compose content depending on file + text
+    const trimmed = message.trim();
+
+    // If PII service is healthy, perform a final check before send (to ensure not stale)
+    if (isServiceHealthy) {
+      try {
+        const finalResult = await checkMessage(trimmed || (selectedFile ? `📎 ${selectedFile.name}` : ''));
+        // If service says block, show alert and stop
+        if (finalResult.shouldBlock) {
+          // Replace this alert with your app's modal/toast as desired
+          alert(`Message blocked: ${finalResult.reason}\n\nDetected: ${finalResult.violations.map((v:any) => v.type).join(', ')}`);
+          return;
+        }
+
+        // If PII present but not blocking and maskedText differs, offer masked send
+        if (finalResult.violations.length > 0 && finalResult.maskedText && finalResult.maskedText !== (trimmed || '')) {
+          // Consider replacing confirm with proper modal in your UI
+          const sendMasked = window.confirm(
+            `Personal information detected in your message.\n\nSend masked version instead?\n\nOriginal: "${trimmed}"\nMasked: "${finalResult.maskedText}"`
+          );
+          if (sendMasked) {
+            // send masked text (if text empty and file exists, attach file normally)
+            const contentToSend = finalResult.maskedText || (selectedFile ? `📎 ${selectedFile.name} uploaded successfully.` : maskContent(trimmed));
+            await sendMessage(appointmentId, contentToSend, selectedFile || undefined);
+            // reset UI
+            setMessage('');
+            setSelectedFile(null);
+            if (fileInputRef.current) fileInputRef.current.value = '';
+            // refresh local messages
+            const updatedMessages = getAppointmentMessages(appointmentId);
+            setMessages(updatedMessages);
+            setPiiCheckResult(null);
+            setShowPiiWarning(false);
+            // simulate doctor reply
+            setTimeout(simulateDoctorReply, 1500);
+            return;
+          } else {
+            // user chose not to send (neither masked nor original)
+            return;
+          }
+        }
+        // No blocking/masking required -> send as-is
+      } catch (err) {
+        console.error('PII check failed during send:', err);
+        // Offer user choice to continue (fallback) - replace with modal as needed
+        const shouldContinue = window.confirm('PII detection service is unavailable. Send message anyway?');
+        if (!shouldContinue) return;
+      }
+    } else {
+      // If service is unavailable, optionally perform client-side mask as a minimal fallback
+      // (You might choose to warn user instead)
+    }
+
+    // For doctor chat: send via backend and refresh messages (same as original)
     if (activeChat === 'doctor') {
-      // Determine content with privacy masking and upload success copy
-      const trimmed = message.trim();
       const contentToSend = selectedFile && !trimmed
         ? `📎 ${selectedFile.name} uploaded successfully.`
-        : maskContent(trimmed);
+        : // if PII check didn't block and no masked branch above, apply light local masking as extra safety
+          maskContent(trimmed);
 
       await sendMessage(appointmentId, contentToSend, selectedFile || undefined);
       setMessage('');
       setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
-      
-      // Refresh messages
+      if (fileInputRef.current) fileInputRef.current.value = '';
+
       const updatedMessages = getAppointmentMessages(appointmentId);
       setMessages(updatedMessages);
 
-      // Simulate doctor reply in 1.5s
+      setPiiCheckResult(null);
+      setShowPiiWarning(false);
+
+      // Simulate doctor reply
       setTimeout(simulateDoctorReply, 1500);
     } else {
-      // Agent chat path (local only)
-      const trimmed = message.trim();
-      if (!trimmed && !selectedFile) return;
+      // Agent chat (local)
       const now = new Date();
       const patientMsg = {
         id: crypto.randomUUID(),
@@ -146,9 +246,7 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
       setAgentMessages(prev => [...prev, patientMsg]);
       setMessage('');
       setSelectedFile(null);
-      if (fileInputRef.current) {
-        fileInputRef.current.value = '';
-      }
+      if (fileInputRef.current) fileInputRef.current.value = '';
       setTimeout(() => {
         const agentReplies = [
           'There’s a nearby hospital 2 km away — would you like directions?',
@@ -210,7 +308,7 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
                  appointment.status === 'pending' ? (isDoctor ? 'Awaiting Your Approval' : 'Awaiting Confirmation') :
                  appointment.status}
               </div>
-              <button 
+              <button
                 onClick={onClose}
                 aria-label="Close modal"
                 className="text-white/80 hover:text-white p-2 rounded-full hover:bg-white/10 transition-all duration-200"
@@ -258,13 +356,12 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
                     <Clock className="h-6 w-6 text-warning-600" />
                   </div>
                   <p className="text-sm text-warning-800 font-medium">
-                    {appointment.status === 'pending' 
-                      ? (isDoctor 
+                    {appointment.status === 'pending'
+                      ? (isDoctor
                           ? 'Accept the appointment first to enable messaging.'
                           : 'Messaging will be available once the doctor confirms your appointment.'
                         )
-                      : 'Messaging is not available for this appointment.'
-                    }
+                      : 'Messaging is not available for this appointment.'}
                   </p>
                 </div>
               </div>
@@ -298,8 +395,8 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
                     )}
                     {msg.attachment && (
                       <div className="mt-2">
-                        <FileAttachmentComponent 
-                          attachment={msg.attachment} 
+                        <FileAttachmentComponent
+                          attachment={msg.attachment}
                           isOwnMessage={(activeChat === 'doctor' ? (msg.senderId === user.id) : (msg.sender === 'patient'))}
                         />
                       </div>
@@ -319,6 +416,23 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
           {/* Message Input */}
           {canSendMessages && (
             <div className="flex-shrink-0 border-t border-neutral-200 p-6 bg-neutral-50">
+              {/* PII Warning */}
+              {showPiiWarning && piiCheckResult && piiCheckResult.violations.length > 0 && (
+                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+                  <div className="flex items-start space-x-2">
+                    <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">Potential personal data detected</p>
+                      <p className="mt-1 text-xs text-red-700/90">
+                        {piiCheckResult.shouldBlock
+                          ? 'This message contains disallowed personal information and cannot be sent.'
+                          : `Detected: ${piiCheckResult.violations.map(v => v.type).join(', ')}. You may send a masked version.`}
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
               {selectedFile && (
                 <div className="mb-4 p-3 bg-primary-50 border border-primary-200 rounded-xl flex items-center justify-between">
                   <div className="flex items-center space-x-2 flex-1 min-w-0">
@@ -345,6 +459,7 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
                   </button>
                 </div>
               )}
+
               <form onSubmit={handleSendMessage} className="flex space-x-4">
                 <input
                   type="text"
@@ -352,16 +467,18 @@ const MessageModal: React.FC<MessageModalProps> = ({ appointmentId, onClose }) =
                   onChange={(e) => setMessage(e.target.value)}
                   placeholder={activeChat === 'doctor' ? `Message ${otherPartyName}...` : 'Message Agent Support...'}
                   className="flex-1 form-input bg-white shadow-sm"
+                  aria-label="Type a message"
                 />
                 <button
                   type="submit"
-                  disabled={!message.trim() && !selectedFile}
+                  disabled={!message.trim() && !selectedFile || (piiCheckResult?.shouldBlock ?? false)}
                   aria-label="Send message"
                   className="btn-primary px-6 disabled:opacity-50 disabled:cursor-not-allowed disabled:transform-none"
                 >
                   <Send className="h-5 w-5" />
                 </button>
               </form>
+
               {/* Attach File Button */}
               <div className="mt-4">
                 <input

@@ -1,10 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { 
-  Calendar, 
-  Clock, 
-  MessageCircle, 
-  XCircle, 
+import {
+  Calendar,
+  Clock,
+  MessageCircle,
+  XCircle,
   AlertTriangle,
   FileText,
   Eye
@@ -280,18 +280,17 @@ const AppointmentItem: React.FC<AppointmentItemProps> = ({
         </div>
       )}
       <div className="flex items-center justify-between">
-          <div className={`text-xs px-2 py-1 rounded-full ${
-          appointment.status === 'completed' ? 'bg-blue-100 text-blue-800' :
-          appointment.status === 'accepted' ? 'bg-green-100 text-green-800' :
-          appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-          appointment.status === 'no_show' ? 'bg-orange-100 text-orange-800' :
-          'bg-gray-100 text-gray-800'
-        }`}>
+        <div className={`text-xs px-2 py-1 rounded-full ${appointment.status === 'completed' ? 'bg-blue-100 text-blue-800' :
+            appointment.status === 'accepted' ? 'bg-green-100 text-green-800' :
+              appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                appointment.status === 'no_show' ? 'bg-orange-100 text-orange-800' :
+                  'bg-gray-100 text-gray-800'
+          }`}>
           {appointment.status === 'completed' ? 'Completed' :
-           appointment.status === 'accepted' ? 'Confirmed' :
-           appointment.status === 'cancelled' ? 'Cancelled' :
-           appointment.status === 'no_show' ? 'No Show' :
-           appointment.status}
+            appointment.status === 'accepted' ? 'Confirmed' :
+              appointment.status === 'cancelled' ? 'Cancelled' :
+                appointment.status === 'no_show' ? 'No Show' :
+                  appointment.status}
         </div>
         <div className="flex items-center space-x-2">
           {isPastDue && showActions && (
@@ -350,7 +349,7 @@ const Dashboard = () => {
   useEffect(() => {
     try {
       localStorage.setItem('doctorAvailability', isAvailable ? 'online' : 'offline');
-    } catch {}
+    } catch { }
   }, [isAvailable]);
 
   if (!user || user.role !== 'doctor') return null;
@@ -369,9 +368,9 @@ const Dashboard = () => {
 
   // Past - completed/cancelled appointments
   const pastAppointments = doctorAppointments
-    .filter(apt => 
-      apt.status === 'completed' || 
-      apt.status === 'cancelled' || 
+    .filter(apt =>
+      apt.status === 'completed' ||
+      apt.status === 'cancelled' ||
       apt.status === 'no_show' ||
       (apt.status === 'accepted' && apt.datetime <= new Date())
     )
@@ -387,7 +386,7 @@ const Dashboard = () => {
 
   const handleMarkCompleted = (appointmentId: string) => {
     const recommendation = recommendations[appointmentId] || '';
-    updateAppointment(appointmentId, { 
+    updateAppointment(appointmentId, {
       status: 'completed',
       recommendations: recommendation
     });
@@ -420,7 +419,7 @@ const Dashboard = () => {
   const PatientHistoryModal = ({ patientId, onClose }: { patientId: string; onClose: () => void }) => {
     const { getPatientHistory } = useData();
     const history: Array<{ date: Date; summary: string }> = getPatientHistory(patientId);
-    
+
     return (
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-4 z-50">
         <div className="bg-white rounded-lg shadow-xl max-w-md w-full max-h-96 overflow-hidden">
@@ -457,10 +456,10 @@ const Dashboard = () => {
 
   const NextBookingCard = React.memo(({ appointment }: { appointment: any }) => {
     const unreadCount = getUnreadMessageCount(appointment.id, user.id);
-    
+
     // Mock patient history summary for demo
     const patientHistorySummary = "3 past visits - Last: Annual checkup (Jan 2024)";
-    
+
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div className="flex items-start justify-between mb-4">
@@ -535,7 +534,7 @@ const Dashboard = () => {
   const AppointmentCard = React.memo(({ appointment, showActions = false, onMessageClick }: { appointment: any; showActions?: boolean; onMessageClick?: (appointmentId: string) => void }) => {
     const unreadCount = getUnreadMessageCount(appointment.id, user.id);
     const isPastDue = appointment.datetime <= new Date() && appointment.status === 'accepted';
-    
+
     return (
       <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
         <div className="flex items-start justify-between mb-4">
@@ -698,20 +697,19 @@ const Dashboard = () => {
           </div>
         )}
         <div className="flex items-center justify-between">
-          <div className={`text-xs px-2 py-1 rounded-full ${
-            appointment.status === 'completed' ? 'bg-blue-100 text-blue-800' :
-            appointment.status === 'accepted' ? 'bg-green-100 text-green-800' :
-            appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
-            appointment.status === 'no_show' ? 'bg-orange-100 text-orange-800' :
-            'bg-gray-100 text-gray-800'
-          }`}>
+          <div className={`text-xs px-2 py-1 rounded-full ${appointment.status === 'completed' ? 'bg-blue-100 text-blue-800' :
+              appointment.status === 'accepted' ? 'bg-green-100 text-green-800' :
+                appointment.status === 'cancelled' ? 'bg-red-100 text-red-800' :
+                  appointment.status === 'no_show' ? 'bg-orange-100 text-orange-800' :
+                    'bg-gray-100 text-gray-800'
+            }`}>
             {appointment.status === 'completed' ? 'Completed' :
-             appointment.status === 'accepted' ? 'Confirmed' :
-             appointment.status === 'cancelled' ? 'Cancelled' :
-             appointment.status === 'no_show' ? 'No Show' :
-             appointment.status}
+              appointment.status === 'accepted' ? 'Confirmed' :
+                appointment.status === 'cancelled' ? 'Cancelled' :
+                  appointment.status === 'no_show' ? 'No Show' :
+                    appointment.status}
           </div>
-          
+
           <div className="flex items-center space-x-2">
             {isPastDue && showActions && (
               <>
@@ -730,9 +728,9 @@ const Dashboard = () => {
               </>
             )}
             {appointment.status === 'accepted' && onMessageClick && (
-            <button
+              <button
                 onClick={() => onMessageClick(appointment.id)}
-              className="flex items-center space-x-1 bg-blue-600 text-white px-3 py-1 rounded text-xs font-medium hover:bg-blue-700 hover:text-white transition-colors duration-200"
+                className="flex items-center space-x-1 bg-blue-600 text-white px-3 py-1 rounded text-xs font-medium hover:bg-blue-700 hover:text-white transition-colors duration-200"
               >
                 <MessageCircle className="h-3 w-3" />
                 <span>Message</span>
@@ -792,31 +790,28 @@ const Dashboard = () => {
           <nav className="-mb-px flex space-x-8">
             <button
               onClick={() => setActiveTab('next')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === 'next'
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${activeTab === 'next'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+                }`}
             >
               Next Booking {nextBooking ? '(1)' : '(0)'}
             </button>
             <button
               onClick={() => setActiveTab('upcoming')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === 'upcoming'
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${activeTab === 'upcoming'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+                }`}
             >
               Upcoming ({upcomingAppointments.length})
             </button>
             <button
               onClick={() => setActiveTab('past')}
-              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${
-                activeTab === 'past'
+              className={`py-2 px-1 border-b-2 font-medium text-sm transition-colors duration-200 ${activeTab === 'past'
                   ? 'border-blue-500 text-blue-600'
                   : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
-              }`}
+                }`}
             >
               Past ({pastAppointments.length})
             </button>
@@ -938,9 +933,9 @@ const Dashboard = () => {
 
       {/* Patient History Modal */}
       {showPatientHistory && (
-        <PatientHistoryModal 
-          patientId={showPatientHistory} 
-          onClose={() => setShowPatientHistory(null)} 
+        <PatientHistoryModal
+          patientId={showPatientHistory}
+          onClose={() => setShowPatientHistory(null)}
         />
       )}
 

@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Send, User, Calendar, Clock, Paperclip, X } from 'lucide-react';
+import { ArrowLeft, Send, User, Calendar, Clock, Paperclip, X, AlertTriangle } from 'lucide-react';
 import { useData } from '../../contexts/DataContext';
 import { useAuth } from '../../contexts/AuthContext';
 import FileAttachmentComponent from '../../components/FileAttachment';
+import { usePIIDetection } from '../../hooks/usePIIDetection';
 
 const Messages = () => {
   const { appointmentId } = useParams<{ appointmentId: string }>();
@@ -15,6 +16,9 @@ const Messages = () => {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const { checkMessage, isServiceHealthy } = usePIIDetection(user?.id, 'high');
+  const [piiCheckResult, setPiiCheckResult] = useState<{ shouldBlock: boolean; reason: string; maskedText: string; confidence: string; violations: any[] } | null>(null);
+  const [showPiiWarning, setShowPiiWarning] = useState(false);
 
   const appointment = appointments.find(apt => apt.id === appointmentId);
 
@@ -30,17 +34,68 @@ const Messages = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
+  useEffect(() => {
+    const checkPII = async () => {
+      if (!message.trim() || !isServiceHealthy) {
+        setPiiCheckResult(null);
+        setShowPiiWarning(false);
+        return;
+      }
+      try {
+        const result = await checkMessage(message);
+        setPiiCheckResult(result);
+        setShowPiiWarning(result.shouldBlock);
+      } catch {
+        setPiiCheckResult(null);
+        setShowPiiWarning(false);
+      }
+    };
+    const timeoutId = setTimeout(checkPII, 500);
+    return () => clearTimeout(timeoutId);
+  }, [message, checkMessage, isServiceHealthy]);
+
   const handleSendMessage = async (e: React.FormEvent) => {
     e.preventDefault();
     if ((!message.trim() && !selectedFile) || !appointmentId) return;
 
-    await sendMessage(appointmentId, message, selectedFile || undefined);
+    let textToSend = message.trim();
+    let messageToSend = textToSend;
+    let shouldSend = true;
+
+    if (isServiceHealthy && textToSend) {
+      try {
+        const result = await checkMessage(textToSend);
+        if (result.shouldBlock) {
+          alert(`Message blocked: ${result.reason}`);
+          return;
+        }
+        if (result.violations.length > 0 && result.maskedText !== textToSend) {
+          const shouldSendMasked = confirm(`Personal information detected. Send masked version?\n\nOriginal: "${textToSend}"\nMasked: "${result.maskedText}"`);
+          if (shouldSendMasked) {
+            messageToSend = result.maskedText;
+          } else {
+            shouldSend = false;
+          }
+        }
+      } catch {
+        const shouldContinue = confirm('PII detection service is unavailable. Send message anyway?');
+        if (!shouldContinue) {
+          shouldSend = false;
+        }
+      }
+    }
+
+    if (!shouldSend) return;
+
+    await sendMessage(appointmentId, messageToSend, selectedFile || undefined);
     setMessage('');
     setSelectedFile(null);
+    setPiiCheckResult(null);
+    setShowPiiWarning(false);
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
     }
-    
+
     // Refresh messages
     const updatedMessages = getAppointmentMessages(appointmentId);
     setMessages(updatedMessages);
@@ -74,14 +129,14 @@ const Messages = () => {
       <div className="max-w-4xl mx-auto h-full flex flex-col">
         {/* Header */}
         <div className="flex-shrink-0 mb-6">
-          <Link 
+          <Link
             to="/doctor/dashboard"
             className="inline-flex items-center text-blue-600 hover:text-blue-700 mb-4 transition-colors duration-200"
           >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Back to Dashboard
           </Link>
-          
+
           {/* Appointment Info */}
           <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
             <div className="flex items-start justify-between">
@@ -125,7 +180,7 @@ const Messages = () => {
               <div className="text-center py-8">
                 <div className="bg-yellow-50 border border-yellow-200 rounded-md p-4 mb-4">
                   <p className="text-sm text-yellow-800">
-                    {appointment.status === 'pending' 
+                    {appointment.status === 'pending'
                       ? 'Accept the appointment first to enable messaging.'
                       : 'Messaging is not available for this appointment.'
                     }
@@ -160,8 +215,8 @@ const Messages = () => {
                     )}
                     {msg.attachment && (
                       <div className="mt-2">
-                        <FileAttachmentComponent 
-                          attachment={msg.attachment} 
+                        <FileAttachmentComponent
+                          attachment={msg.attachment}
                           isOwnMessage={msg.senderId === user.id}
                         />
                       </div>
@@ -181,6 +236,16 @@ const Messages = () => {
           {/* Message Input */}
           {canSendMessages && (
             <div className="border-t border-gray-200 p-4">
+              {showPiiWarning && piiCheckResult && piiCheckResult.violations.length > 0 && (
+                <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-md">
+                  <div className="flex items-start space-x-2">
+                    <AlertTriangle className="h-4 w-4 text-red-500 mt-0.5 flex-shrink-0" />
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-red-800">PII detected, this message is not allowed</p>
+                    </div>
+                  </div>
+                </div>
+              )}
               {selectedFile && (
                 <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md flex items-center justify-between">
                   <div className="flex items-center space-x-2 flex-1 min-w-0">
