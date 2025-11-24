@@ -16,6 +16,9 @@ class Settings:
     default_sensitivity: str = os.getenv("PII_DEFAULT_SENSITIVITY", "high")
     supabase_url: str | None = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL")
     supabase_anon_key: str | None = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY")
+    supabase_service_role_key: str | None = os.getenv("SUPABASE_SERVICE_ROLE_KEY")
+    groq_api_key: str | None = os.getenv("GROQ_API_KEY")
+    groq_model: str = os.getenv("GROQ_MODEL", "llama3-70b-8192")
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     allow_origins: list[str] = None
 
@@ -32,6 +35,11 @@ class Settings:
         # Ensure Supabase credentials are read after .env is loaded
         self.supabase_url = os.getenv("SUPABASE_URL") or os.getenv("VITE_SUPABASE_URL") or self.supabase_url
         self.supabase_anon_key = os.getenv("SUPABASE_ANON_KEY") or os.getenv("VITE_SUPABASE_ANON_KEY") or self.supabase_anon_key
+        self.supabase_service_role_key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or self.supabase_service_role_key
+        
+        # Ensure Groq credentials are read after .env is loaded
+        self.groq_api_key = os.getenv("GROQ_API_KEY") or self.groq_api_key
+        self.groq_model = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
     @property
     def supabase_configured(self) -> bool:

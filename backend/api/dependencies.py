@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from typing import Optional
+import os
 
 from fastapi import Header, HTTPException, status
 
@@ -53,4 +54,23 @@ def get_supabase_client() -> SupabaseClient:
                 "message": "Supabase credentials not found in environment (.env). Please set SUPABASE_URL/SUPABASE_ANON_KEY or VITE_SUPABASE_URL/VITE_SUPABASE_ANON_KEY.",
             },
         )
+    return client
+
+
+@lru_cache
+def _build_service_role_client() -> Optional[SupabaseClient]:
+    url = settings.supabase_url
+    key = settings.supabase_service_role_key
+    if not (url and key):
+        return None
+    return SupabaseClient(url, key)
+
+
+def get_service_role_client() -> SupabaseClient:
+    """Return a Supabase client with SERVICE ROLE privileges (bypasses RLS)."""
+    client = _build_service_role_client()
+    if client is None:
+        # Fallback to anon client if service role not configured, but warn
+        print("[WARNING] Service role key not configured. Falling back to anon client (RLS may block access).")
+        return get_supabase_client()
     return client
